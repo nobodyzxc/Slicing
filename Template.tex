@@ -61,13 +61,20 @@
 \begin{abstract}
 
     %\input{abstract.tex}
-    we propose a method to do program slicing. with slicing, we can analyse properties more efficiently. We take the EVM bytecode as the example language which used to write smart contract\cite{szabo2003advances} on Ethereum.
+  we propose a method to do program slicing on stack-based programming language. With slicing, we can analyse properties more efficiently. We take the EVM bytecode\cite{wood2014ethereum} as the example language, which is used to write smart contract\cite{szabo2003advances} on Ethereum\cite{wood2014ethereum}.
 
 \end{abstract}
 
 \begin{keywords}
 BlockChain, Ethereum, Slicing, Verification
 \end{keywords}
+
+
+\section{Introduction}
+\label{sec:introduction}
+
+\section{Related Work}
+\label{sec:relatedwork}
 
 \section{Method}
 \label{sec:method}
@@ -87,6 +94,7 @@ BlockChain, Ethereum, Slicing, Verification
   offsetDepPCs = dictionary()\;
   conVals = dictionary()\;
   valDepPCs = dictionary()\;
+  rwDependency = dictionary()\;
 
   \tcc{Return All dependant program counters}
 
@@ -97,7 +105,14 @@ BlockChain, Ethereum, Slicing, Verification
   \tcc{check insts if have same addr parameters }
 
   \Def{addrOverlap(insA, insB)}{
-    \Return conAddrs[insA.pc] $\cap$ conAddrs[insB.pc] $\neq$ $\O$ 
+    rangeA = product(conAddrs[insA.pc], \\ \quad \quad \quad \quad \quad \quad \quad \ \ conOffsets[insA.pc])\;
+    rangeB = product(conAddrs[insB.pc], \\ \quad \quad \quad \quad \quad \quad \quad \ \ conOffsets[insB.pc])\;
+    \For{(Aa, Ao), (Ba, Bo) $\in$ product(rangeA, rangeB)}{
+      \If{\{Aa..Aa + Ao\} $\cap$ \{Ba..Ba + Bo\} $\neq$ $\O$}{
+          \Return True\;
+        }
+    }
+    \Return False\;
   }
 
   \tcc{Initialize Environment}
@@ -134,10 +149,8 @@ BlockChain, Ethereum, Slicing, Verification
 
 \end{vAlgorithm}
 
-
-
 \RestyleAlgo{algoruled} % ruled algorithm
-\begin{vAlgorithm}[ht!]{0.55\textwidth}{1em}
+\begin{vAlgorithm}[ht!]{0.57\textwidth}{1em}
                       %{algorithm width}{indent width}
 \SetNoFillComment
   \caption{buildAddressDependency}
@@ -150,27 +163,31 @@ BlockChain, Ethereum, Slicing, Verification
     \tcc{initialize the environment}
     env.initialize()\;
     \tcc{declare and alias variables}
-    visit = $\O$ \;
+    visit, alter = $\O$, $\O$ \;
     sreads = StackDG.SLOADs \;
     swrites = StackDG.SSTOREs \;
     mreads = StackDG.MSTOREs \;
     mwrites = StackDG.\{MLOAD $\cup$ SHA3 \\ \quad \quad \quad \quad \quad $\cup$ CREATE $\cup$ CALL $\cup$ RETURN\}s
 
+    \tcc{build addr dependency of \\ storage and memroy}
     \While{True}{
-      visit = buildDepend(swrites, sreads, visit, env)\;
-      visit = buildDepend(mwrites, mreads, visit, env)\;
+      evaled = env.evaled.copy()\;
+      buildDepend(swrites, sreads, visit)\;
+      buildDepend(mwrites, mreads, visit)\;
       \If{exist write inst can be re-evaled}{
         \For{inst $\in$ re-evaled}{
           update $Environment$ $variables$ in env \\ \quad \quad with eval($instruction$ $parameters$)
         }
-        \Continue\;
       }
-      \Break\;
+      \If{env.evaled $\setminus$ evaled = $\O$}{
+        \Break\;
+      }
     }
+    \Return env.rwDependency\;
   }
 
   \tcc{helper function}
-  \Def{buildDepend(writes, reads, visit, env)}{
+  \Def{buildDepend(writes, reads, visit)}{
 
     concrete = \{ins $\in$ (writes $\setminus$ visit) \\ \quad \quad \quad \quad \quad \quad \ \ $|$ \ \ $env.depPCs(ins)$ = $\O$\}\;
     \While{concrete $\neq$ $\O$}{
@@ -188,12 +205,11 @@ BlockChain, Ethereum, Slicing, Verification
 
       concrete = \{ins $\in$ (writes $\setminus$ visit) \\ \quad \quad \quad \quad \quad \quad \ \ $|$ \ \ $env.depPCs(ins)$ = $\O$\}\;
     }
-    \Return visit\;
   }
 \end{vAlgorithm}
 
 \RestyleAlgo{algoruled} % ruled algorithm
-\begin{vAlgorithm}[ht!]{0.55\textwidth}{1em}
+\begin{vAlgorithm}[ht!]{0.57\textwidth}{1em}
                       %{algorithm width}{indent width}
 \SetNoFillComment
   \caption{dfsCFG}
@@ -209,17 +225,63 @@ BlockChain, Ethereum, Slicing, Verification
     \If{wInst $\in$ block}{
       rwInsts = rwInsts $\setminus$ \\ \quad \quad \{ ins $\in$ block.insts $|$ ins.pc $>$ wInst.pc\}\;
     }
-    \tcc{if "exist the probability" to re-write the same address then return, "probability" means the "or" part}
     \For{inst $\in$ rwInsts}{
+      \tcc{if "exist the probability" to re-write the same address then return, "probability" means the "or" part}
       \If{inst.name = wInst.name
       \AndL (env.addrOverlap(wInst, inst) \\ \quad \quad \OrL env.addrDepPCs[inst.pc] $\neq$ $\O$)}{
-      visit.remove(block)\;
-      \Return\;
+        visit.remove(block)\;
+        \Return;
+      }
+      \If{inst $\in$ reads}{
+        depPCs = env.addrDepPCs[inst.pc] $\cup$ \\ \quad \quad \quad \quad \ env.offsetDepPCs[inst.pc]\;
+        \If{depPCs $\neq$ $\O$ \AndL \\
+          \quad  depPCs $\setminus$ env.evaled = $\O$}{
+          update $Environment$ $variables$ in env \\ \quad \quad with eval($instruction$ $parameters$)
+        }
+
+        \If{addrOverlap(wInst, inst)}{
+          env.evaled.add(pc)\;
+          env.rwDependency[inst.pc].add(wInst)\;
+          env.conVals[inst.pc].update(\\
+          \quad \quad \quad \quad \quad \quad \ \ env.conVals[wInst.pc]);
+        }
       }
     }
+    \For{nextBlock $\in$ block.outgoingBlock}{
+      dfsCFG(wInst, nextBlock, writes, reads, visit)\;
+    }
+    visit.remove(block)\;
   }
 
 \end{vAlgorithm}
+
+\RestyleAlgo{algoruled} % ruled algorithm
+\begin{vAlgorithm}[ht!]{0.55\textwidth}{1em}
+                      %{algorithm width}{indent width}
+\SetNoFillComment
+  \caption{eval}
+  \KwIn{$StackDG$, instruction, visit}
+  \KwOut{$concrete$ $values$, $dependant$ $PCs$}
+
+  \Def{eval(inst, visit)}{
+    \If{inst $\in$ visit}{
+      \Return \{\}, \{inst\}\;
+    }
+    visit.add(inst)\;
+    concrete, dependant = $\O$, $\O$\;
+    \If{inst.name.startswith('PUSH')}{
+      \Return \{int(op.operand)\}, \{\}\;
+    }
+    \Else{
+      cons, deps = \{map(eval(\_ , visit), argList) \\ \quad \quad \quad \quad \quad \quad \quad \quad $|$ argList $\in$ inst.argLists\}
+    }
+  }
+
+
+\end{vAlgorithm}
+
+\section{experiment}
+\label{sec:experiment}
 
 \section{Conclusion}
 \label{sec:conclusion}
