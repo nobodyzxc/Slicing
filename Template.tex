@@ -26,8 +26,11 @@
 %
 % Single address.
 % ---------------
-\name{CHEN ZI XUAN}
-\address{s10410@cs.nccu.edu.tw}
+
+\name{Zi Xuan Chen, Fang Yu}
+\address{National Chengchi University \\
+Department of Computer Science, Management Information Systems \\
+104703010@nccu.edu.tw, yuf@nccu.edu.tw}
 
 %
 % For example:
@@ -39,16 +42,17 @@
 % Two addresses (uncomment and modify for two-address case).
 % ----------------------------------------------------------
 %\twoauthors
-%  {A. Author-one, B. Author-two\sthanks{Thanks to XYZ agency for funding.}}
-%	{School A-B\\
-%	Department A-B\\
-%	Address A-B}
-%  {C. Author-three, D. Author-four\sthanks{The fourth author performed the work
-%	while at ...}}
-%	{School C-D\\
-%	Department C-D\\
-%	Address C-D}
-%
+%  {Zi Xuan Chen
+%    %\sthanks{The fourth author performed the work while at ...}
+%  }
+%	{National Chengchi University, \\ Department of Computer Science \\
+%	s10410@nccu.edu.tw}
+%  {Fang Yu
+%    %\sthanks{Thanks to XYZ agency for funding.}
+%  }
+%	{National Chengchi University, \\ Department of Management Information Systems, \\
+%	yuf@nccu.edu.tw}
+
 
 \begin{document}
 %\ninept
@@ -60,13 +64,13 @@
 
 \begin{abstract}
 
-    %\input{abstract.tex}
+  %\input{abstract.tex}
   we propose a method to do program slicing on stack-based programming language. With slicing, we can analyse properties more efficiently. We take the EVM bytecode\cite{wood2014ethereum} as the example language, which is used to write smart contract\cite{szabo2003advances} on Ethereum\cite{wood2014ethereum}.
 
 \end{abstract}
 
 \begin{keywords}
-BlockChain, Ethereum, Slicing, Verification
+  BlockChain, Ethereum, Slicing, Verification
 \end{keywords}
 
 
@@ -81,13 +85,14 @@ BlockChain, Ethereum, Slicing, Verification
 
 \RestyleAlgo{algoruled} % ruled algorithm
 \begin{vAlgorithm}[ht!]{0.56\textwidth}{1em}
-\SetNoFillComment
-                      %{algorithm width}{indent width}
+  \SetNoFillComment
+  %{algorithm width}{indent width}
   \caption{AnalysisEnvironment}
   \KwIn{$StackDG$}
 
   \tcc{Environment variables}
 
+  evaled = $\O$\;
   conAddrs = dictionary()\;
   addrDepPCs = dictionary()\;
   conOffsets = dictionary()\;
@@ -108,9 +113,9 @@ BlockChain, Ethereum, Slicing, Verification
     rangeA = product(conAddrs[insA.pc], \\ \quad \quad \quad \quad \quad \quad \quad \ \ conOffsets[insA.pc])\;
     rangeB = product(conAddrs[insB.pc], \\ \quad \quad \quad \quad \quad \quad \quad \ \ conOffsets[insB.pc])\;
     \For{(Aa, Ao), (Ba, Bo) $\in$ product(rangeA, rangeB)}{
-      \If{\{Aa..Aa + Ao\} $\cap$ \{Ba..Ba + Bo\} $\neq$ $\O$}{
-          \Return True\;
-        }
+      \uIf{\{Aa..Aa + Ao\} $\cap$ \{Ba..Ba + Bo\} $\neq$ $\O$}{
+        \Return True\;
+      }
     }
     \Return False\;
   }
@@ -120,7 +125,6 @@ BlockChain, Ethereum, Slicing, Verification
   \Def{initialize()}{
 
     \Global $Environment$ $variables$\;
-    \tcc{eval all the instructions' parameters}
     readIns = StackDG.readIns \;
     writeIns = StackDG.writeIns \;
 
@@ -142,17 +146,17 @@ BlockChain, Ethereum, Slicing, Verification
     valDepPCs = \{ pc: dep $|$ (pc, (\_ , dep)) $\in$ vals \}\;
 
     \tcc{write insts that can't be re-evaled}
-    evaled = \{pc $|$ pc $\in$ addrDepPCs, addrDepPCs[pc] = $\O$\} \\
-    \quad $\cap$ \{pc $|$ pc $\in$ offsetDepPCs, offsetDepPCs[pc] = $\O$\} \\
-    \quad $\cap$ \{pc $|$ pc $\in$ valDepPCs, valDepPCs[pc] = $\O$\}
+    evaled = \{pc $\in$ addrDepPCs $|$ addrDepPCs[pc] = $\O$\} \\
+    \quad $\cap$ \{pc $\in$ offsetDepPCs $|$ offsetDepPCs[pc] = $\O$\} \\
+    \quad $\cap$ \{pc $\in$ valDepPCs $|$ valDepPCs[pc] = $\O$\}
   }
 
 \end{vAlgorithm}
 
 \RestyleAlgo{algoruled} % ruled algorithm
 \begin{vAlgorithm}[ht!]{0.57\textwidth}{1em}
-                      %{algorithm width}{indent width}
-\SetNoFillComment
+  %{algorithm width}{indent width}
+  \SetNoFillComment
   \caption{buildAddressDependency}
   \KwIn{$CFG$, $StackDG$}
   \KwOut{$AddressDG$}
@@ -174,12 +178,12 @@ BlockChain, Ethereum, Slicing, Verification
       evaled = env.evaled.copy()\;
       buildDepend(swrites, sreads, visit)\;
       buildDepend(mwrites, mreads, visit)\;
-      \If{exist write inst can be re-evaled}{
+      \uIf{exist write inst can be re-evaled}{
         \For{inst $\in$ re-evaled}{
           update $Environment$ $variables$ in env \\ \quad \quad with eval($instruction$ $parameters$)
         }
       }
-      \If{env.evaled $\setminus$ evaled = $\O$}{
+      \uIf{env.evaled $\setminus$ evaled = $\O$}{
         \Break\;
       }
     }
@@ -198,7 +202,7 @@ BlockChain, Ethereum, Slicing, Verification
       }
       visit.update(concrete)\;
       \For{inst $\in$ (writes $\setminus$ visit)}{
-        \If{(env.depPCs(inst) $\setminus$ env.evaled) = $\O$}{
+        \uIf{(env.depPCs(inst) $\setminus$ env.evaled) = $\O$}{
           update $Environment$ $variables$ in env \\ \quad \quad with eval($instruction$ $parameters$)
         }
       }
@@ -210,8 +214,8 @@ BlockChain, Ethereum, Slicing, Verification
 
 \RestyleAlgo{algoruled} % ruled algorithm
 \begin{vAlgorithm}[ht!]{0.57\textwidth}{1em}
-                      %{algorithm width}{indent width}
-\SetNoFillComment
+  %{algorithm width}{indent width}
+  \SetNoFillComment
   \caption{dfsCFG}
   \KwIn{$CFG$, $StackDG$}
   \KwOut{$AddressDG$}
@@ -222,24 +226,24 @@ BlockChain, Ethereum, Slicing, Verification
   \Def{dfsCFG(wInst, block, writes, reads, visit)}{
     visit.add(block)\;
     rwInsts = (block.insts $\cap$ writes $\cap$ reads)\;
-    \If{wInst $\in$ block}{
+    \uIf{wInst $\in$ block}{
       rwInsts = rwInsts $\setminus$ \\ \quad \quad \{ ins $\in$ block.insts $|$ ins.pc $>$ wInst.pc\}\;
     }
     \For{inst $\in$ rwInsts}{
       \tcc{if "exist the probability" to re-write the same address then return, "probability" means the "or" part}
-      \If{inst.name = wInst.name
-      \AndL (env.addrOverlap(wInst, inst) \\ \quad \quad \OrL env.addrDepPCs[inst.pc] $\neq$ $\O$)}{
+      \uIf{inst.name = wInst.name
+        \AndL (env.addrOverlap(wInst, inst) \\ \quad \quad \OrL env.addrDepPCs[inst.pc] $\neq$ $\O$)}{
         visit.remove(block)\;
         \Return;
       }
-      \If{inst $\in$ reads}{
+      \uIf{inst $\in$ reads}{
         depPCs = env.addrDepPCs[inst.pc] $\cup$ \\ \quad \quad \quad \quad \ env.offsetDepPCs[inst.pc]\;
-        \If{depPCs $\neq$ $\O$ \AndL \\
+        \uIf{depPCs $\neq$ $\O$ \AndL \\
           \quad  depPCs $\setminus$ env.evaled = $\O$}{
           update $Environment$ $variables$ in env \\ \quad \quad with eval($instruction$ $parameters$)
         }
 
-        \If{addrOverlap(wInst, inst)}{
+        \uIf{addrOverlap(wInst, inst)}{
           env.evaled.add(pc)\;
           env.rwDependency[inst.pc].add(wInst)\;
           env.conVals[inst.pc].update(\\
@@ -257,26 +261,74 @@ BlockChain, Ethereum, Slicing, Verification
 
 \RestyleAlgo{algoruled} % ruled algorithm
 \begin{vAlgorithm}[ht!]{0.55\textwidth}{1em}
-                      %{algorithm width}{indent width}
-\SetNoFillComment
+  %{algorithm width}{indent width}
+  \SetNoFillComment
   \caption{eval}
   \KwIn{$StackDG$, instruction, visit}
   \KwOut{$concrete$ $values$, $dependant$ $PCs$}
 
   \Def{eval(inst, visit)}{
-    \If{inst $\in$ visit}{
+    \uIf{inst $\in$ visit}{
       \Return \{\}, \{inst\}\;
     }
     visit.add(inst)\;
     concrete, dependant = $\O$, $\O$\;
-    \If{inst.name.startswith('PUSH')}{
+    \uIf{inst.name.startswith('PUSH')}{
       \Return \{int(op.operand)\}, \{\}\;
     }
-    \Else{
-      cons, deps = \{map(eval(\_ , visit), argList) \\ \quad \quad \quad \quad \quad \quad \quad \quad $|$ argList $\in$ inst.argLists\}
+    cons, deps = \{map(eval(\_ , visit), argList) \\ \quad \quad \quad \quad \quad \quad \quad \quad $|$ argList $\in$ inst.argLists\}$^T$\;
+    \For{argList $\in$ cons}{
+      val = None\;
+      \uIf{None $\in$ argList}{\Continue\;}
+      \uElseIf{inst.name = 'ADD'}{
+        val = \Let x, y = argList \In x + y\;
+      }
+      \uElseIf{inst.name = 'SUB'}{
+        val = \Let x, y = argList \In x - y\;
+      }
+      \uElseIf{inst.name = 'MUL'}{
+        val = \Let x, y = argList \In x * y\;
+      }
+      \uElseIf{inst.name = 'DIV'}{
+        val = \Let x, y = argList \In x / y\;
+      }
+      \uElseIf{inst.name = 'EXP'}{
+        val = \Let x, y = argList \In $x^{y}$\;
+      }
+      \uElseIf{inst.name = 'ISZERO'}{
+        \[
+        val = \Let [x] = argList \ \In
+          \begin{cases}
+            0,& \text{if } x = 0\\
+            1,              & \text{otherwise}
+          \end{cases}\;
+        \]
+      }
+      \uElseIf{inst.name = 'NOT'}{
+        val = \Let [x] = argList \In (1 $<<$ 256) - 1 - x\;
+      }
+      \uElseIf{inst.name = 'AND'}{
+        val = \Let x, y = argList \In $x \ \& \ y$\;
+      }
+      \uElseIf{inst.name = 'OR'}{
+        val = \Let x, y = argList \In $x \ | \ y$\;
+      }
+      \uElseIf{inst.name = 'EQ'}{
+        val = \Let x, y = argList \In $x \ = \ y$\;
+      }
+      \uElseIf{inst.name $\in$ \{'MLOAD', 'SLOAD', 'SHA3'\}}{
+        concrete.update(env.conVals[inst.pc])\;
+      }
+      \uElse{
+        \tcc{SHA3 not impl yet}
+        trhow Excption("not handle the inst yet")\;
+      }
+      \uIf{val $\neq$ None}{ concrete.add(val)\; }
+      dependant.update(concat(deps))\;
     }
+    visit.remove(inst)\;
+    \Return concrete, dependant\;
   }
-
 
 \end{vAlgorithm}
 
