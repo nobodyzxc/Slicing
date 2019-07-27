@@ -77,9 +77,9 @@ Department of Computer Science, Management Information Systems \\
 \section{Introduction}
 \label{sec:introduction}
 
-There are many interest properties about Ethereum. Ethereum can be viewed as a transaction-based state machine. On Ethereum, all transaction executed on Ethereum Virtual Machine (EVM), which is a simple stack-based architecture, limits stack item size to 1024. Executions will be failed if stackoverflow occured while executing the smart contract. Besides stack, \textbf{\textit{gas}} is another interesting property on Ethereum. To limit the cost of the transaction execution, EVM takes the handling fee named \textbf{\textit{gas}} from transaction sender.
+There are many interest properties about Ethereum. Ethereum can be viewed as a transaction-based state machine. We can transit the transation state by sending transation or execute smart contract. On Ethereum, all transaction executed on Ethereum Virtual Machine (EVM), which is a simple stack-based architecture, limits stack item size to 1024. Executions will be failed if stackoverflow occured while executing the smart contract. Besides stack, \textbf{\textit{gas}} is another interesting property on Ethereum. To limit the cost of the transaction execution, EVM takes the handling fee named \textbf{\textit{gas}} from transaction sender.
 
-To Analyze the properties more precisely, we slice the smart contract by construcing dependencies between instructions. With the dependencies, we can slice a smaller program from some interested point. Then we can the the sliced program for other analysis purpose.
+To analyze the properties more precisely, we slice the smart contract by construcing dependencies between instructions. With the dependencies, we can slice a smaller program from some interested point. Then we can the the sliced program for other analysis purpose.
 
 \section{Related Work}
 \label{sec:relatedwork}
@@ -96,8 +96,16 @@ The first step to construct control flow graph is spliting basic blocks. We spli
 
 The second step is building the edges between basic blocks. Some edges can be computed by simply succeeding the pc of the \textbf{\textit{JUMPI}} and other instructions $\notin$ \textbf{\textit{end instructions}}, followed by \textbf{\textit{JUMPDEST}}. Because the property of the stack-based machine, all the jump destinations are pushed to stack implicitly. For this problem, we use value set analysis to find all the possible destination values.
 
+Most of smart contracts are written as Solidity, whcih is an object-oriented (or even called contract-oriented), high-level language for implementing smart contracts. The contract in Solidity is like an object. Users can call the public functions in the contract, which we can treat as member functions in a object. From lower-level --- EVM bytecode, the Solidity compiler will compile a dispatcher to dispatch all the public functions in the contract. The dispatcher can recognize the function hashes in transactions that users sent via Application Binary Interface (ABI). We compute the function boundaries and apply the value set analysis on each function to construct complete contract flow graph and instruction dependencies.
+
+In the value set analysis (VSA), we traverse the basic blocks in control flow graph and continue finding new target address of next block by simulate the execution of instructions with a abstract stack. Abstract stack abstracts all the possible statck state. The nth-item in abstract stack represent a set of all possible value of nth-item in all possible stack state. So it is a over-approximation to compute the jump destinations. For each block, we record the states of the abstract stack before and after executing the instructions in the block. With the states, we can check the converge of the analysis. If we revisit a block, and it's post-execution state is same as last time, we consider it achieve the converge. We assume no new value would be found. Note that only the \textbf{\textit{PUSH}}, \textbf{\textit{SWAP}}, \textbf{\textit{DUP}}, \textbf{\textit{AND}} instruction are implemented here, for other instructions, we only do the push, pop on the stack based on the operation times it defined. It's because other instructions implementation will not affect the target address computation.
+
+The instructions dependencies are also constructed while doing value set analysis. To build the dependencies between instructions, we need keeping track of the data flow of instruction operands. All the operands are pushed into and poped from the stack. Instead of marking all the operands with the instructions which pushed it, we push the instructions to the stack directly, and edges are added when the instructions are popped. Note that we don't use abstract stack here.Instead, we use a set of stack to keep all the states of possible stacks to maintain the accuracy of each operand list. If we use abstract stack here, more combination of operand list will be generated. It will lead more ambiguous result for address evaluation while building memory dependency.
+
+After building the instruction dependency with stacks by value set analysis. we start to build the dependency between instruction by address of memory and storage.
+
 \RestyleAlgo{algoruled} % ruled algorithm
-\begin{vAlgorithm}[ht!]{0.57\textwidth}{1em}
+\begin{vAlgorithm}[ht!]{0.50\textwidth}{1em}
   %{algorithm width}{indent width}
   \SetNoFillComment
   \caption{buildCFGandStackDependency}
@@ -131,14 +139,14 @@ The second step is building the edges between basic blocks. Some edges can be co
       outBlocks = \{ toExplore.pop() \}\;
       \Do{outBlocks}{
         block = outBlocks.pop()\;
-        outBlocks = outBlocks $\cup$ \\ \quad \quad \quad \quad \quad transFuncBlock(cfg, dg, func, \\ \quad \quad \quad \quad \quad \quad \quad \quad \quad \quad \quad \ \ \ block, stat)\;
+        outBlocks = outBlocks $\cup$ \\ \quad \quad transFuncBlock(cfg, dg, func, \\ \quad \quad \quad \quad \quad \quad \quad \quad \ \ \ block, stat)\;
       }
       \For{src, dsts $\in$ stat.lastDiscoveredTargets}{
         cfg.addEdges(src, dsts)\;
         toExplore = toExplore $\cup$ dsts\;
       }
 
-      stat.lastDiscoveredTargets = dictionary(default=$\O$)\;
+      stat.lastDiscoveredTargets = \quad dictionary(default=$\O$)\;
     }
     cfg.computeReachability(func.entry, func.id)\;
   }
@@ -146,7 +154,7 @@ The second step is building the edges between basic blocks. Some edges can be co
 \end{vAlgorithm}
 
 \RestyleAlgo{algoruled} % ruled algorithm
-\begin{vAlgorithm}[ht!]{0.56\textwidth}{1em}
+\begin{vAlgorithm}[ht!]{0.5\textwidth}{1em}
   \SetNoFillComment
   %{algorithm width}{indent width}
   \caption{ValueSetAnalysisUtility}
@@ -157,7 +165,7 @@ The second step is building the edges between basic blocks. Some edges can be co
 
     stat.visit[block] += 1\;
 
-    \tcc{save prev stack to check convergence}
+    \tcc{save previous stack to check convergence}
     prevStack, \_ = stat.stacksOut[block]
 
     oprdStack, instStack = abstStack(), listStack()\;
@@ -169,7 +177,9 @@ The second step is building the edges between basic blocks. Some edges can be co
       oprdStack = oprdStack.merge(ostk)\;
       instStack = oprdStack.merge(istk)\;
     }
-    exploreBlock(dg, block, oprdStack, instStack, stat)\;
+    \tcc{ explore the block }
+    exploreBlock(dg, block, \\ \quad \quad \quad oprdStack, instStack, stat)\;
+    \tcc{ add branch according the result }
     \uIf{block.end $\in$ \{JUMP, JUMPI\}}{
       oprdStack, \_ = stat.stacksIn[end]\;
       \For{ dst $\in$ oprdStack.top().vals()}{
