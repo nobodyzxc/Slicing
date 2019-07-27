@@ -65,7 +65,7 @@ Department of Computer Science, Management Information Systems \\
 \begin{abstract}
 
   %\input{abstract.tex}
-  we propose a method to do program slicing on stack-based programming language. With slicing, we can analyse properties more efficiently. We take the EVM bytecode\cite{wood2014ethereum} as the example language, which is used to write smart contract\cite{szabo2003advances} on Ethereum\cite{wood2014ethereum}.
+  We propose a method to do program slicing on stack-based programming language. With slicing, we can analyse properties more efficiently. We take the EVM bytecode\cite{wood2014ethereum} as the example language, which is used to write smart contract\cite{szabo2003advances} on Ethereum\cite{wood2014ethereum}.
 
 \end{abstract}
 
@@ -77,41 +77,199 @@ Department of Computer Science, Management Information Systems \\
 \section{Introduction}
 \label{sec:introduction}
 
+There are many interest properties about Ethereum. Ethereum can be viewed as a transaction-based state machine. On Ethereum, all transaction executed on Ethereum Virtual Machine (EVM), which is a simple stack-based architecture, limits stack item size to 1024. Executions will be failed if stackoverflow occured while executing the smart contract. Besides stack, \textbf{\textit{gas}} is another interesting property on Ethereum. To limit the cost of the transaction execution, EVM takes the handling fee named \textbf{\textit{gas}} from transaction sender.
+
+To Analyze the properties more precisely, we slice the smart contract by construcing dependencies between instructions. With the dependencies, we can slice a smaller program from some interested point. Then we can the the sliced program for other analysis purpose.
+
 \section{Related Work}
 \label{sec:relatedwork}
 
+TBC.
+
 \section{Method}
 \label{sec:method}
+
+To compute the dependencies between instructions, we need construct the control flow graph first. Unlike register-based machine's instruction, which's operand are called as register explicitly, for the stack-based machine, the operand that instructions depended are stored on the stack implicitly. Thus, a control flow graph for stack simulation is needed.
+
+
+The first step to construct control flow graph is spliting basic blocks. We split basic blocks by \textbf{\textit{JUMPDEST}} and \textbf{\textit{end instructions}}. \textbf{\textit{JUMPDEST}} is normally considered as the beginning of blocks becuase other blocks can target \textbf{\textit{JUMPDEST}} to connect the edges. The \textbf{\textit{end instructions}} include \textbf{\textit{STOP}}, \textbf{\textit{SELFDESTRUCT}}, \textbf{\textit{RETURN}}, \textbf{\textit{REVERT}}, \textbf{\textit{INVALID}}, \textbf{\textit{SUICIDE}}, \textbf{\textit{JUMP}}, \textbf{\textit{JUMPI}}.
+
+The second step is building the edges between basic blocks. Some edges can be computed by simply succeeding the pc of the \textbf{\textit{JUMPI}} and other instructions $\notin$ \textbf{\textit{end instructions}}, followed by \textbf{\textit{JUMPDEST}}. Because the property of the stack-based machine, all the jump destinations are pushed to stack implicitly. For this problem, we use value set analysis to find all the possible destination values.
+
+\RestyleAlgo{algoruled} % ruled algorithm
+\begin{vAlgorithm}[ht!]{0.57\textwidth}{1em}
+  %{algorithm width}{indent width}
+  \SetNoFillComment
+  \caption{buildCFGandStackDependency}
+  \KwIn{$Opcode$}
+  \KwOut{$CFG, StackDG$}
+  %\tcc{split blocks with $JUMP$, $JUMPI$, \\ $STOP$, $SELFDESTRUCT$, $RETURN$, \\ $REVERT$, $INVALID$, $SUICIDE$ \\ $JUMPDEST$ ... etc}
+  \Def{buildCFGandStackDependency(opcode)}{
+    dg = DG(opcode)\;
+    cfg = CFG(opcode)\;
+    cfg.buildBasicBlocks()\;
+    cfg.buildSimpleEdges()\;
+    cfg.buildFunctions(cfg.basicBlocks.first)\;
+    \For{func $\in$ cfg.functions}{
+      valueSetAnalysis(cfg, dg, func)\;
+    }
+    \Return cfg, dg\;
+  }
+  \tcc{state constructor}
+  \Def{State()}{
+    this.visit = dictionary(default=0)\;
+    this.stacksIn = dictionary(default=None)\;
+    this.stacksOut = dictionary(default=None)\;
+    this.lastDiscoveredTargets = dictionary(default=$\O$)\;
+    this.discoveredTargets = dictionary(default=$\O$)\;
+  }
+  \tcc{value set analysis}
+  \Def{valueSetAnalysis(cfg, dg, func)}{
+    stat = State()\;
+    toExplore = \{ func.entry \}\;
+    \Do{toExplore}{
+      outBlocks = \{ toExplore.pop() \}\;
+      \Do{outBlocks}{
+        block = outBlocks.pop()\;
+        outBlocks = outBlocks $\cup$ \\ \quad \quad \quad \quad \quad transFuncBlock(cfg, dg, func, \\ \quad \quad \quad \quad \quad \quad \quad \quad \quad \quad \quad \ \ \ block, stat)\;
+      }
+      \For{src, dsts $\in$ stat.lastDiscoveredTargets}{
+        cfg.addEdges(src, dsts)\;
+        toExplore = toExplore $\cup$ dsts\;
+      }
+
+      stat.lastDiscoveredTargets = dictionary(default=$\O$)\;
+    }
+    cfg.computeReachability(func.entry, func.id)\;
+  }
+
+\end{vAlgorithm}
+
+\RestyleAlgo{algoruled} % ruled algorithm
+\begin{vAlgorithm}[ht!]{0.56\textwidth}{1em}
+  \SetNoFillComment
+  %{algorithm width}{indent width}
+  \caption{ValueSetAnalysisUtility}
+
+  \tcc{trasfer function blocks}
+  \Def{transFuncBlock(cfg, dg, func, block, stat)}{
+    \uIf{(func.id = DISPATCHER\_ID \\ \quad \quad \quad \quad \AndL block.reacheable) \\ \quad \OrL stat.visit[block] $>\ visitLimit$}{ \Return\; }
+
+    stat.visit[block] += 1\;
+
+    \tcc{save prev stack to check convergence}
+    prevStack, \_ = stat.stacksOut[block]
+
+    oprdStack, instStack = abstStack(), listStack()\;
+
+    inBlocks = [b $\in$ block.inBlocks \\ \quad \quad \quad \quad \quad \quad $|$ stat.stacksOut[b] $\neq$ None]
+
+    \For{father $\in$ inBlocks}{
+      ostk, istk = stat.stacksOut[father]\;
+      oprdStack = oprdStack.merge(ostk)\;
+      instStack = oprdStack.merge(istk)\;
+    }
+    exploreBlock(dg, block, oprdStack, instStack, stat)\;
+    \uIf{block.end $\in$ \{JUMP, JUMPI\}}{
+      oprdStack, \_ = stat.stacksIn[end]\;
+      \For{ dst $\in$ oprdStack.top().vals()}{
+        \uIf{isJumpDest(dst)}{
+          addBranch(src, dst, stat)\;
+        }
+      }
+    }
+    oprdStack, \_ = stat.stacksOut[end]\;
+    \uIf{prevStack $\neq$ oprdStack}{
+      \tcc{ not converged }
+      \Return block.outBlocksByFunc(func.id)\;
+    }
+    \Return $\O$;
+  }
+
+  \tcc{explore basic block}
+  \Def{exploreBlock(dg, block, oprdStack, instStack, stat)}{
+    \For{inst $\in$ block.instructions}{
+      stat.stacksIn[inst] = (oprdStack, instStack)\;
+      stat.stacksOut[inst] = \\ \quad transferFuncInst(dg, inst, \\ \quad \quad \quad oprdStack, instStack, stat)\;
+    }
+  }
+  \tcc{add branch to value set analysis}
+  \Def{addBranch(src, dst, stat)}{
+    \uIf{dst $\notin$ stat.discoveredTargets[src]}{
+      \uIf{src $\notin$ stat.lastDiscoveredTargets}{
+        stat.lastDiscoveredTargets[src] = $\O$\;
+      }
+      stat.lastDiscoveredTargets[src].add(dst)\;
+      stat.discoveredTargets[src].add(dst)\;
+    }
+  }
+
+\end{vAlgorithm}
+
+\RestyleAlgo{algoruled} % ruled algorithm
+\begin{vAlgorithm}[ht!]{0.56\textwidth}{1em}
+  \SetNoFillComment
+  %{algorithm width}{indent width}
+  \caption{ValueSetAnalysisUtility}
+  \tcc{ transfer instruction }
+  \Def{transferFuncInst(dg, inst, oprdStack, instStack, stat)}{
+    oprdStack = oprdStack.copy()\;
+    instStack = instStack.copy()\;
+    \uIf{ inst $\in$ PUSHn[n=1..32] }{
+     oprdStack.push(inst.operand)\;
+     instStack.push(inst)\;
+    }
+    \uElseIf{ inst $\in$ SWAPn[n=1..16]}{
+      oprdStack.swap(n)\;
+      instStack.swap(n)\;
+    }
+    \uElseIf{ inst $\in$ DUPn[n=1..16]}{
+      oprdStack.dup(n)\;
+      instStack.dup(n)\;
+    }
+    \uElseIf{ inst = AND }{
+      v1, v2 = oprdStack.pop(), oprdStack.pop()\;
+      oprdStack.push(absAnd(v1, v2))\;
+      v1s, v2s = instStack.pop(), instStack.pop()\;
+      \For{ v1, v2 $\in$ zip(v1s, v2s)}{
+        dg.addEdges(inst, [v1, v2])\;
+      }
+      instStack.push(inst)\;
+    }
+    \uElse{
+      \RepTimes{inst.popNumber}{
+        oprdStack.pop()\;
+      }
+      \For{args $\in$ [instStack.pop() \\ \quad \quad \ $|$ n $\in$ range(inst.popNumber)]$^T$}{
+        dg.addEdges(inst, args)\;
+      }
+      \RepTimes{inst.pushNumber}{
+        oprdStack.push(None)\;
+        instStack.push(inst)\;
+      }
+    }
+    \Return oprdStack, instStack\;
+  }
+\end{vAlgorithm}
+
 
 \RestyleAlgo{algoruled} % ruled algorithm
 \begin{vAlgorithm}[ht!]{0.56\textwidth}{1em}
   \SetNoFillComment
   %{algorithm width}{indent width}
   \caption{AnalysisEnvironment}
-  \KwIn{$StackDG$}
-
-  \tcc{Environment variables}
-
-  evaled = $\O$\;
-  conAddrs = dictionary()\;
-  addrDepPCs = dictionary()\;
-  conOffsets = dictionary()\;
-  offsetDepPCs = dictionary()\;
-  conVals = dictionary()\;
-  valDepPCs = dictionary()\;
-  rwDependency = dictionary()\;
 
   \tcc{Return All dependant program counters}
 
-  \Def{depPCs(inst)}{
-    \Return addrDepPCs[inst.pc] \\ \quad \quad \quad $\cup$ offsetDepPCs[inst.pc] \\ \quad \quad \quad $\cup$ valDepPCs[inst.pc]
+  \Def{depInsts(env, inst)}{
+    \Return env.addrDepInsts[inst] \\ \quad \quad \quad $\cup$ env.offsetDepInsts[inst] \\ \quad \quad \quad $\cup$ env.valDepInsts[inst]
   }
 
   \tcc{check insts if have same addr parameters }
 
-  \Def{addrOverlap(insA, insB)}{
-    rangeA = product(conAddrs[insA.pc], \\ \quad \quad \quad \quad \quad \quad \quad \ \ conOffsets[insA.pc])\;
-    rangeB = product(conAddrs[insB.pc], \\ \quad \quad \quad \quad \quad \quad \quad \ \ conOffsets[insB.pc])\;
+  \Def{addrOverlap(env, instA, instB)}{
+    rangeA = product(env.conAddrs[instA], \\ \quad \quad \quad \quad \quad \quad \quad \ \ env.conOffsets[instA])\;
+    rangeB = product(env.conAddrs[instB], \\ \quad \quad \quad \quad \quad \quad \quad \ \ env.conOffsets[instB])\;
     \For{(Aa, Ao), (Ba, Bo) $\in$ product(rangeA, rangeB)}{
       \uIf{\{Aa..Aa + Ao\} $\cap$ \{Ba..Ba + Bo\} $\neq$ $\O$}{
         \Return True\;
@@ -119,36 +277,33 @@ Department of Computer Science, Management Information Systems \\
     }
     \Return False\;
   }
+  \tcc{Environment constructor}
 
-  \tcc{Initialize Environment}
+  \Def{Environment(stackDg)}{
 
-  \Def{initialize()}{
-
-    \Global $Environment$ $variables$\;
-    readIns = StackDG.readIns \;
-    writeIns = StackDG.writeIns \;
+    rInsts = stackDg.rInsts \;
+    wInsts = stackDg.wInsts \;
+    addrs = [ i, eval(i.addrs) $|$ i $\in$ rInsts $\cup$ wInsts ] \;
+    offsets = [ i, eval(i.offsets) $|$ i $\in$ rInsts $\cup$ wInsts ] \;
+    vals = [ i, eval(i.vals) $|$ i $\in$ wInsts ] \;
 
     \tcc{eval instructions' parameters (addr)}
-    addrs = [ i.pc, eval(i.addrs) $|$ i $\in$ readIns $\cup$ writeIns ] \;
-
-    conAddrs = \{ pc: con $|$ (pc, (con, \_)) $\in$ addrs \}\;
-    addrDepPCs = \{ pc: dep $|$ (pc, (\_ , dep)) $\in$ addrs \}\;
+    this.conAddrs = \{ i: con $|$ (i, (con, \_)) $\in$ addrs \}\;
+    this.addrDepInsts = \{ i: dep $|$ (i, (\_ , dep)) $\in$ addrs \}\;
 
     \tcc{eval instructions' parameters (offset)}
-    offsets = [ i.pc, eval(i.offsets) $|$ i $\in$ readIns $\cup$ writeIns ] \;
 
-    conOffsets = \{ pc: con $|$ (pc, (con, \_)) $\in$ offsets \}\;
-    offsetDepPCs = \{ pc: dep $|$ (pc, (\_ , dep)) $\in$ offsets \}\;
+    this.conOffsets = \{ i: con $|$ (i, (con, \_)) $\in$ offsets \}\;
+    this.offsetDepInsts = \{ i: dep $|$ (i, (\_ , dep)) $\in$ offsets \}\;
 
     \tcc{eval instructions' parameters (val)}
-    vals = [ i.pc, eval(i.vals) $|$ i $\in$ writeIns ] \;
-    conVals = \{ pc: con $|$ (pc, (con, \_)) $\in$ vals \}\;
-    valDepPCs = \{ pc: dep $|$ (pc, (\_ , dep)) $\in$ vals \}\;
+    this.conVals = \{ i: con $|$ (i, (con, \_)) $\in$ vals \}\;
+    this.valDepInsts = \{ i: dep $|$ (i, (\_ , dep)) $\in$ vals \}\;
 
     \tcc{write insts that can't be re-evaled}
-    evaled = \{pc $\in$ addrDepPCs $|$ addrDepPCs[pc] = $\O$\} \\
-    \quad $\cap$ \{pc $\in$ offsetDepPCs $|$ offsetDepPCs[pc] = $\O$\} \\
-    \quad $\cap$ \{pc $\in$ valDepPCs $|$ valDepPCs[pc] = $\O$\}
+    this.evaled = \{i $\in$ addrDepInsts $|$ addrDepInsts[i] = $\O$\} \\
+    \quad $\cap$ \{i $\in$ offsetDepInsts $|$ offsetDepInsts[i] = $\O$\} \\
+    \quad $\cap$ \{i $\in$ valDepInsts $|$ valDepInsts[i] = $\O$\}
   }
 
 \end{vAlgorithm}
@@ -163,21 +318,22 @@ Department of Computer Science, Management Information Systems \\
 
   \Import AnalysisEnvironment \As env
 
-  \Def{buildAddressDependency()}{
-    \tcc{initialize the environment}
-    env.initialize()\;
+  \Def{buildAddressDependency(cfg, stackDg, opcode)}{
     \tcc{declare and alias variables}
+    addrDg = DG(opcode)\;
     visit, alter = $\O$, $\O$ \;
-    sreads = StackDG.SLOADs \;
-    swrites = StackDG.SSTOREs \;
-    mreads = StackDG.MSTOREs \;
-    mwrites = StackDG.\{MLOAD $\cup$ SHA3 \\ \quad \quad \quad \quad \quad $\cup$ CREATE $\cup$ CALL $\cup$ RETURN\}s
+    sreads = stackDg.SLOADs \;
+    swrites = stackDg.SSTOREs \;
+    mreads = stackDg.MSTOREs \;
+    mwrites = stackDg.\{MLOAD $\cup$ SHA3 \\ \quad \quad \quad \quad \quad $\cup$ CREATE $\cup$ CALL $\cup$ RETURN\}s
 
+    \tcc{new a environment}
+    env = Environment(stackDg)\;
     \tcc{build addr dependency of \\ storage and memroy}
     \While{True}{
       evaled = env.evaled.copy()\;
-      buildDepend(swrites, sreads, visit)\;
-      buildDepend(mwrites, mreads, visit)\;
+      buildDependency(addrDg, swrites, sreads, visit)\;
+      buildDependency(addrDg, mwrites, mreads, visit)\;
       \uIf{exist write inst can be re-evaled}{
         \For{inst $\in$ re-evaled}{
           update $Environment$ $variables$ in env \\ \quad \quad with eval($instruction$ $parameters$)
@@ -187,27 +343,27 @@ Department of Computer Science, Management Information Systems \\
         \Break\;
       }
     }
-    \Return env.rwDependency\;
+    \Return addrDg\;
   }
 
   \tcc{helper function}
-  \Def{buildDepend(writes, reads, visit)}{
+  \Def{buildDependency(addrDg, writes, reads, visit)}{
 
-    concrete = \{ins $\in$ (writes $\setminus$ visit) \\ \quad \quad \quad \quad \quad \quad \ \ $|$ \ \ $env.depPCs(ins)$ = $\O$\}\;
+    concrete = \{inst $\in$ (writes $\setminus$ visit) \\ \quad \quad \quad \quad \quad \quad \ \ $|$ \ \ $depInsts(env, inst)$ = $\O$\}\;
     \While{concrete $\neq$ $\O$}{
 
       \For{inst $\in$ concrete}{
         block = CFG.blockOf(inst)\;
-        dfsCFG(inst, block, writes, reads, $\O$)\;
+        dfsCFG(addrDg, inst, block, writes, reads, $\O$)\;
       }
       visit.update(concrete)\;
       \For{inst $\in$ (writes $\setminus$ visit)}{
-        \uIf{(env.depPCs(inst) $\setminus$ env.evaled) = $\O$}{
+        \uIf{(depInsts(env, inst) $\setminus$ env.evaled) = $\O$}{
           update $Environment$ $variables$ in env \\ \quad \quad with eval($instruction$ $parameters$)
         }
       }
 
-      concrete = \{ins $\in$ (writes $\setminus$ visit) \\ \quad \quad \quad \quad \quad \quad \ \ $|$ \ \ $env.depPCs(ins)$ = $\O$\}\;
+      concrete = \{ins $\in$ (writes $\setminus$ visit) \\ \quad \quad \quad \quad \quad \quad \ \ $|$ \ \ $depInsts(env, ins)$ = $\O$\}\;
     }
   }
 \end{vAlgorithm}
@@ -217,41 +373,39 @@ Department of Computer Science, Management Information Systems \\
   %{algorithm width}{indent width}
   \SetNoFillComment
   \caption{dfsCFG}
-  \KwIn{$CFG$, $StackDG$}
-  \KwOut{$AddressDG$}
 
   \Import AnalysisEnvironment \As env
 
   \tcc{do CFG dfs for building dependency}
-  \Def{dfsCFG(wInst, block, writes, reads, visit)}{
+  \Def{dfsCFG(addrDg, wInst, block, writes, reads, visit)}{
     visit.add(block)\;
-    rwInsts = (block.insts $\cap$ writes $\cap$ reads)\;
+    rwInsts = block.insts $\cap$ (writes $\cup$ reads)\;
     \uIf{wInst $\in$ block}{
-      rwInsts = rwInsts $\setminus$ \\ \quad \quad \{ ins $\in$ block.insts $|$ ins.pc $>$ wInst.pc\}\;
+      rwInsts = rwInsts $\setminus$ \\ \quad \quad \{ inst $\in$ block.insts $|$ inst.pc $<$ wInst.pc\}\;
     }
     \For{inst $\in$ rwInsts}{
       \tcc{if "exist the probability" to re-write the same address then return, "probability" means the "or" part}
       \uIf{inst.name = wInst.name
-        \AndL (env.addrOverlap(wInst, inst) \\ \quad \quad \OrL env.addrDepPCs[inst.pc] $\neq$ $\O$)}{
+        \\ \quad \AndL (addrOverlap(env, wInst, inst) \\ \quad \quad \quad \OrL env.addrDepInsts[inst] $\neq$ $\O$)}{
         visit.remove(block)\;
         \Return;
       }
       \uIf{inst $\in$ reads}{
-        depPCs = env.addrDepPCs[inst.pc] $\cup$ \\ \quad \quad \quad \quad \ env.offsetDepPCs[inst.pc]\;
-        \uIf{depPCs $\neq$ $\O$ \AndL \\
-          \quad  depPCs $\setminus$ env.evaled = $\O$}{
+        deps = env.addrDepInsts[inst] $\cup$ \\ \quad \quad \quad \quad \ env.offsetDepInsts[inst]\;
+        \uIf{deps $\neq$ $\O$ \AndL \\
+          \quad  deps $\setminus$ env.evaled = $\O$}{
           update $Environment$ $variables$ in env \\ \quad \quad with eval($instruction$ $parameters$)
         }
 
-        \uIf{addrOverlap(wInst, inst)}{
-          env.evaled.add(pc)\;
-          env.rwDependency[inst.pc].add(wInst)\;
-          env.conVals[inst.pc].update(\\
-          \quad \quad \quad \quad \quad \quad \ \ env.conVals[wInst.pc]);
+        \uIf{addrOverlap(env, wInst, inst)}{
+          env.evaled.add(inst)\;
+          addrDg.addEdge(wInst, inst)\;
+          env.conVals[inst].update(\\
+          \quad \quad \quad \quad \quad \quad \ \ env.conVals[wInst]);
         }
       }
     }
-    \For{nextBlock $\in$ block.outgoingBlock}{
+    \For{nextBlock $\in$ block.outBlock}{
       dfsCFG(wInst, nextBlock, writes, reads, visit)\;
     }
     visit.remove(block)\;
@@ -264,17 +418,17 @@ Department of Computer Science, Management Information Systems \\
   %{algorithm width}{indent width}
   \SetNoFillComment
   \caption{eval}
-  \KwIn{$StackDG$, instruction, visit}
+  \KwIn{$instruction$, $visit$}
   \KwOut{$concrete$ $values$, $dependant$ $PCs$}
 
   \Def{eval(inst, visit)}{
     \uIf{inst $\in$ visit}{
-      \Return \{\}, \{inst\}\;
+      \Return $\O$, \{inst\}\;
     }
     visit.add(inst)\;
     concrete, dependant = $\O$, $\O$\;
     \uIf{inst.name.startswith('PUSH')}{
-      \Return \{int(op.operand)\}, \{\}\;
+      \Return \{int(op.operand)\}, $\O$;
     }
     cons, deps = \{map(eval(\_ , visit), argList) \\ \quad \quad \quad \quad \quad \quad \quad \quad $|$ argList $\in$ inst.argLists\}$^T$\;
     \For{argList $\in$ cons}{
@@ -317,11 +471,11 @@ Department of Computer Science, Management Information Systems \\
         val = \Let x, y = argList \In $x \ = \ y$\;
       }
       \uElseIf{inst.name $\in$ \{'MLOAD', 'SLOAD', 'SHA3'\}}{
-        concrete.update(env.conVals[inst.pc])\;
+        concrete.update(env.conVals[inst])\;
       }
       \uElse{
         \tcc{SHA3 not impl yet}
-        trhow Excption("not handle the inst yet")\;
+        throw Exception("not handle the inst yet")\;
       }
       \uIf{val $\neq$ None}{ concrete.add(val)\; }
       dependant.update(concat(deps))\;
