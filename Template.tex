@@ -146,7 +146,7 @@ Most of smart contracts are written in Solidity, whcih is an object-oriented (or
 
 
 
-In the VSA, we traverse the basic blocks in CFG and continue finding new target address of next block by simulate the execution of instructions with a abstract stack. Abstract stack abstracts all the possible statck state. The nth-item in abstract stack represent a set of all possible value of nth-item in all possible stack state. So it is a over-approximation to compute the jump destinations. For each block, we record the states of the abstract stack before and after executing the instructions in the block. With the states, we can check the converge of the analysis. If we revisit a block, and it's post-execution state is same as last time, we consider it achieve the converge. We assume no new value would be found. Note that only the \textbf{\textit{PUSH}}, \textbf{\textit{SWAP}}, \textbf{\textit{DUP}}, \textbf{\textit{AND}} are implemented here, for other instructions, we only do the push, pop on the stack based on the operation times it defined. It's because other instructions implementation will not affect the target address computation.
+In the VSA, we traverse the basic blocks in CFG and continue finding new target address of next block by simulate the execution of instructions with a abstract stack. Abstract stack abstracts all the possible statck state. The nth-item in abstract stack represent a set of all possible value of nth-item in all possible stack state. So it is a over-approximation to compute the jump destinations. For each block, we record the states of the abstract stack before and after executing the instructions in the block. With the states, we can check the convergence of the analysis. If we revisit a block, and it's post-execution state is same as last time, we consider it achieve the convergence. We assume no new value would be found. Note that only the \textbf{\textit{PUSH}}, \textbf{\textit{SWAP}}, \textbf{\textit{DUP}}, \textbf{\textit{AND}} are implemented here, for other instructions, we only do the push, pop on the stack based on the operation times it defined. It's because other instructions implementation will not affect the target address computation.
 
 
 The instructions dependencies are also constructed while doing VSA. To build the dependencies, we need keeping track of the data flow of operands. All the operands are pushed into and poped from the stack. Instead of marking the operands with the instructions which pushed it, we push the instructions to the stack directly, and edges are added when the instructions are popped. Note that we don't use abstract stack here.Instead, we use a set of stack to keep all the states of possible stacks to maintain the accuracy of each operand list. If we use abstract stack here, more combination of operand list will be generated. It will lead more ambiguous result for address evaluation while building memory dependency.
@@ -277,8 +277,9 @@ Storage fees have a slightly nuanced behaviour—to in-centivise minimisation of
 
 The main idea to construct address dependency is traversing the CFG from write instructions with a adress, and build the dependencies with the instructions which read the address, until meet the next instructions whcih rewrite the address. With the DG we constructed, we can evaluate some address values and the stored values from known constants by the dependencies. There are some instructions about the read/write operation on memory and storage. For the storage, the write instructions is \textbf{\textit{SSTORE}}, the load instruction is \textbf{\textit{SLOAD}}. For the memory, the write instruction is \textbf{\textit{MSTORE}}, the read instruction include \textbf{\textit{MLOAD}}, \textbf{\textit{SHA3}}, \textbf{\textit{CREATE}}, \textbf{\textit{CALL}}, \textbf{\textit{RETURN}}.
 
-For write instructions, there are three part we concerned: the address it stored, the range of memory (offset) it covered and the value it wrote. For each part, if we could eval it as constants from other constants (normally come from the terminal of DG --- \textbf{\textit{PUSH}} instruction), we save the values as a concrete value set for the part. if not, all the instruction that it needed to do evaluation, would be saved as a dependant instruction set, once all the instruction in the set are evaluated, the part could be evaluated again to get the concrete values. Same as the write instructions, the read instructions also have these part. But for the values it load, are depended on the write instructions' value which have the same address as it, that's just the dependency we want to construct.
+For write instructions, there are three parts we concerned: the address it stored, the range of memory (offset) it covered and the value it wrote. For each part, if we could eval it as constants from other constants (normally come from the terminal of DG --- \textbf{\textit{PUSH}} instruction), we save the values as a concrete value set for the part. if not, all the instruction that it needed to do evaluation, would be saved as a dependant instruction set, once all the instruction in the set are evaluated, the part could be evaluated again to get the concrete values. Same as the write instructions, the read instructions also have these part. But for the values it load, are depended on the write instructions' value which have the same address as it, that's just the dependency we want to construct.
 
+To build the address dependency, we new an environment which contains the three parts for the read/write instructions. we eval the storage and memory separately, but in some situations, the \textbf{\textit{SSTORE}} will dependent on some \textbf{\textit{MLOAD}} instructions, so we put both part into same evaluation loop.
 
 \RestyleAlgo{algoruled} % ruled algorithm
 \begin{vAlgorithm}[ht!]{0.56\textwidth}{1em}
@@ -286,24 +287,6 @@ For write instructions, there are three part we concerned: the address it stored
   %{algorithm width}{indent width}
   \caption{AnalysisEnvironment}
 
-  \tcc{Return All dependant program counters}
-
-  \Def{depInsts(env, inst)}{
-    \Return env.addrDepInsts[inst] \\ \quad \quad \quad $\cup$ env.offsetDepInsts[inst] \\ \quad \quad \quad $\cup$ env.valDepInsts[inst]
-  }
-
-  \tcc{check insts if have same addr parameters }
-
-  \Def{addrOverlap(env, instA, instB)}{
-    rangeA = product(env.conAddrs[instA], \\ \quad \quad \quad \quad \quad \quad \quad \ \ env.conOffsets[instA])\;
-    rangeB = product(env.conAddrs[instB], \\ \quad \quad \quad \quad \quad \quad \quad \ \ env.conOffsets[instB])\;
-    \For{(Aa, Ao), (Ba, Bo) $\in$ product(rangeA, rangeB)}{
-      \uIf{\{Aa..Aa + Ao\} $\cap$ \{Ba..Ba + Bo\} $\neq$ $\O$}{
-        \Return True\;
-      }
-    }
-    \Return False\;
-  }
   \tcc{Environment constructor}
 
   \Def{Environment(stackDg)}{
@@ -333,10 +316,34 @@ For write instructions, there are three part we concerned: the address it stored
     \quad $\cap$ \{i $\in$ valDepInsts $|$ valDepInsts[i] = $\O$\}
   }
 
+  \tcc{Return All dependant program counters}
+
+  \Def{depInsts(env, inst)}{
+    \Return env.addrDepInsts[inst] \\ \quad \quad \quad $\cup$ env.offsetDepInsts[inst] \\ \quad \quad \quad $\cup$ env.valDepInsts[inst]
+  }
+
+  \tcc{check insts if have same addr parameters }
+
+  \Def{addrOverlap(env, instA, instB)}{
+    rangeA = product(env.conAddrs[instA], \\ \quad \quad \quad \quad \quad \quad \quad \ \ env.conOffsets[instA])\;
+    rangeB = product(env.conAddrs[instB], \\ \quad \quad \quad \quad \quad \quad \quad \ \ env.conOffsets[instB])\;
+    \For{(Aa, Ao), (Ba, Bo) $\in$ product(rangeA, rangeB)}{
+      \uIf{\{Aa..Aa + Ao\} $\cap$ \{Ba..Ba + Bo\} $\neq$ $\O$}{
+        \Return True\;
+      }
+    }
+    \Return False\;
+  }
+
 \end{vAlgorithm}
 
+In the environment, there is a set name \textit{evaled}, which contains the instructions which's all possible values we have already evaled and stored in the concrete set, and their dependent instruction set are empty. For every evaluation round of storage and memory we check the \textit{evaled} set to determine if it achieved the convergence. If there are no new instruction added to \textit{evaled}, the evaluation will terminate.
+
+To build the address dependency, we need to evaluate the address of the instruction first. After having some concrete addresses of write instructions, we start the CFG traversing with deep first search (DFS) from the addresses.
+
+
 \RestyleAlgo{algoruled} % ruled algorithm
-\begin{vAlgorithm}[ht!]{0.57\textwidth}{1em}
+\begin{vAlgorithm}[]{0.52\textwidth}{1em}
   %{algorithm width}{indent width}
   \SetNoFillComment
   \caption{buildAddressDependency}
@@ -345,25 +352,25 @@ For write instructions, there are three part we concerned: the address it stored
 
   \Import AnalysisEnvironment \As env
 
-  \Def{buildAddressDependency(cfg, stackDg, opcode)}{
+  \Def{buildAddressDependency(cfg,\\ \quad \quad \quad \quad \quad \quad stackDg, opcode)}{
     \tcc{declare and alias variables}
     addrDg = DG(opcode)\;
     visit, alter = $\O$, $\O$ \;
-    sreads = stackDg.SLOADs \;
-    swrites = stackDg.SSTOREs \;
-    mreads = stackDg.MSTOREs \;
-    mwrites = stackDg.\{MLOAD $\cup$ SHA3 \\ \quad \quad \quad \quad \quad $\cup$ CREATE $\cup$ CALL $\cup$ RETURN\}s
+    swrites = \{ inst $\in$ stackDg $|$ inst = SSTORE \} \;
+    sreads = \{ inst $\in$ stackDg $|$ inst = SLOAD \} \;
+    mwrites = \{ insts $\in$ stackDg $|$ inst = MSTORE \}\;
+    mreads = \{ inst $\in$ stackDg $|$ inst $\in$ \{ MLOAD, \\ \quad \quad \quad \quad \quad SHA3, CREATE, CALL, RETURN\}\}\;
 
     \tcc{new a environment}
     env = Environment(stackDg)\;
-    \tcc{build addr dependency of \\ storage and memroy}
+    \tcc{evaluate until it converge }
     \While{True}{
       evaled = env.evaled.copy()\;
-      buildDependency(addrDg, swrites, sreads, visit)\;
-      buildDependency(addrDg, mwrites, mreads, visit)\;
+      buildDependency(addrDg, \\ \quad \quad \quad \quad swrites, sreads, visit)\;
+      buildDependency(addrDg, \\ \quad \quad \quad \quad mwrites, mreads, visit)\;
       \uIf{exist write inst can be re-evaled}{
         \For{inst $\in$ re-evaled}{
-          update $Environment$ $variables$ in env \\ \quad \quad with eval($instruction$ $parameters$)
+          update $Environment$ $variables$ in env \\ \quad  with eval($instruction$ $parameters$)
         }
       }
       \uIf{env.evaled $\setminus$ evaled = $\O$}{
@@ -373,7 +380,7 @@ For write instructions, there are three part we concerned: the address it stored
     \Return addrDg\;
   }
 
-  \tcc{helper function}
+  \tcc{ build dependency with write instructions}
   \Def{buildDependency(addrDg, writes, reads, visit)}{
 
     concrete = \{inst $\in$ (writes $\setminus$ visit) \\ \quad \quad \quad \quad \quad \quad \ \ $|$ \ \ $depInsts(env, inst)$ = $\O$\}\;
@@ -381,16 +388,16 @@ For write instructions, there are three part we concerned: the address it stored
 
       \For{inst $\in$ concrete}{
         block = CFG.blockOf(inst)\;
-        dfsCFG(addrDg, inst, block, writes, reads, $\O$)\;
+        dfsCFG(addrDg, inst, block, \\ \quad \quad \quad \quad \quad writes, reads, $\O$)\;
       }
       visit.update(concrete)\;
       \For{inst $\in$ (writes $\setminus$ visit)}{
         \uIf{(depInsts(env, inst) $\setminus$ env.evaled) = $\O$}{
-          update $Environment$ $variables$ in env \\ \quad \quad with eval($instruction$ $parameters$)
+          update $Environment$ $variables$ in env \\ \quad with eval($instruction$ $parameters$)
         }
       }
 
-      concrete = \{ins $\in$ (writes $\setminus$ visit) \\ \quad \quad \quad \quad \quad \quad \ \ $|$ \ \ $depInsts(env, ins)$ = $\O$\}\;
+      concrete = \{inst $\in$ (writes $\setminus$ visit) \\ \quad \quad \quad \quad \quad \quad \ \ \ $|$ \ \ $depInsts(env, ins)$ = $\O$\}\;
     }
   }
 \end{vAlgorithm}
