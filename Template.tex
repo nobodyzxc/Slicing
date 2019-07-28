@@ -282,185 +282,19 @@ For write instructions, there are three parts we concerned: the address it store
 To build the address dependency, we new an environment which contains the three parts for the read/write instructions. we eval the storage and memory separately, but in some situations, the \textbf{\textit{SSTORE}} will dependent on some \textbf{\textit{MLOAD}} instructions, so we put both part into same evaluation loop.
 
 \RestyleAlgo{algoruled} % ruled algorithm
-\begin{vAlgorithm}[ht!]{0.56\textwidth}{1em}
-  \SetNoFillComment
-  %{algorithm width}{indent width}
-  \caption{AnalysisEnvironment}
-
-  \tcc{Environment constructor}
-
-  \Def{Environment(stackDg)}{
-
-    rInsts = stackDg.rInsts \;
-    wInsts = stackDg.wInsts \;
-    addrs = [ i, eval(i.addrs) $|$ i $\in$ rInsts $\cup$ wInsts ] \;
-    offsets = [ i, eval(i.offsets) $|$ i $\in$ rInsts $\cup$ wInsts ] \;
-    vals = [ i, eval(i.vals) $|$ i $\in$ wInsts ] \;
-
-    \tcc{eval instructions' parameters (addr)}
-    this.conAddrs = \{ i: con $|$ (i, (con, \_)) $\in$ addrs \}\;
-    this.addrDepInsts = \{ i: dep $|$ (i, (\_ , dep)) $\in$ addrs \}\;
-
-    \tcc{eval instructions' parameters (offset)}
-
-    this.conOffsets = \{ i: con $|$ (i, (con, \_)) $\in$ offsets \}\;
-    this.offsetDepInsts = \{ i: dep $|$ (i, (\_ , dep)) $\in$ offsets \}\;
-
-    \tcc{eval instructions' parameters (val)}
-    this.conVals = \{ i: con $|$ (i, (con, \_)) $\in$ vals \}\;
-    this.valDepInsts = \{ i: dep $|$ (i, (\_ , dep)) $\in$ vals \}\;
-
-    \tcc{write insts that can't be re-evaled}
-    this.evaled = \{i $\in$ addrDepInsts $|$ addrDepInsts[i] = $\O$\} \\
-    \quad $\cap$ \{i $\in$ offsetDepInsts $|$ offsetDepInsts[i] = $\O$\} \\
-    \quad $\cap$ \{i $\in$ valDepInsts $|$ valDepInsts[i] = $\O$\}
-  }
-
-  \tcc{Return All dependant program counters}
-
-  \Def{depInsts(env, inst)}{
-    \Return env.addrDepInsts[inst] \\ \quad \quad \quad $\cup$ env.offsetDepInsts[inst] \\ \quad \quad \quad $\cup$ env.valDepInsts[inst]
-  }
-
-  \tcc{check insts if have same addr parameters }
-
-  \Def{addrOverlap(env, instA, instB)}{
-    rangeA = product(env.conAddrs[instA], \\ \quad \quad \quad \quad \quad \quad \quad \ \ env.conOffsets[instA])\;
-    rangeB = product(env.conAddrs[instB], \\ \quad \quad \quad \quad \quad \quad \quad \ \ env.conOffsets[instB])\;
-    \For{(Aa, Ao), (Ba, Bo) $\in$ product(rangeA, rangeB)}{
-      \uIf{\{Aa..Aa + Ao\} $\cap$ \{Ba..Ba + Bo\} $\neq$ $\O$}{
-        \Return True\;
-      }
-    }
-    \Return False\;
-  }
-
-\end{vAlgorithm}
-
-In the environment, there is a set name \textit{evaled}, which contains the instructions which's all possible values we have already evaled and stored in the concrete set, and their dependent instruction set are empty. For every evaluation round of storage and memory we check the \textit{evaled} set to determine if it achieved the convergence. If there are no new instruction added to \textit{evaled}, the evaluation will terminate.
-
-To build the address dependency, we need to evaluate the address of the instruction first. After having some concrete addresses of write instructions, we start the CFG traversing with deep first search (DFS) from the addresses.
-
-
-\RestyleAlgo{algoruled} % ruled algorithm
-\begin{vAlgorithm}[]{0.52\textwidth}{1em}
-  %{algorithm width}{indent width}
-  \SetNoFillComment
-  \caption{buildAddressDependency}
-  \KwIn{$CFG$, $StackDG$}
-  \KwOut{$AddressDG$}
-
-  \Import AnalysisEnvironment \As env
-
-  \Def{buildAddressDependency(cfg,\\ \quad \quad \quad \quad \quad \quad stackDg, opcode)}{
-    \tcc{declare and alias variables}
-    addrDg = DG(opcode)\;
-    visit, alter = $\O$, $\O$ \;
-    swrites = \{ inst $\in$ stackDg $|$ inst = SSTORE \} \;
-    sreads = \{ inst $\in$ stackDg $|$ inst = SLOAD \} \;
-    mwrites = \{ insts $\in$ stackDg $|$ inst = MSTORE \}\;
-    mreads = \{ inst $\in$ stackDg $|$ inst $\in$ \{ MLOAD, \\ \quad \quad \quad \quad \quad SHA3, CREATE, CALL, RETURN\}\}\;
-
-    \tcc{new a environment}
-    env = Environment(stackDg)\;
-    \tcc{evaluate until it converge }
-    \While{True}{
-      evaled = env.evaled.copy()\;
-      buildDependency(addrDg, \\ \quad \quad \quad \quad swrites, sreads, visit)\;
-      buildDependency(addrDg, \\ \quad \quad \quad \quad mwrites, mreads, visit)\;
-      \uIf{exist write inst can be re-evaled}{
-        \For{inst $\in$ re-evaled}{
-          update $Environment$ $variables$ in env \\ \quad  with eval($instruction$ $parameters$)
-        }
-      }
-      \uIf{env.evaled $\setminus$ evaled = $\O$}{
-        \Break\;
-      }
-    }
-    \Return addrDg\;
-  }
-
-  \tcc{ build dependency with write instructions}
-  \Def{buildDependency(addrDg, writes, reads, visit)}{
-
-    concrete = \{inst $\in$ (writes $\setminus$ visit) \\ \quad \quad \quad \quad \quad \quad \ \ $|$ \ \ $depInsts(env, inst)$ = $\O$\}\;
-    \While{concrete $\neq$ $\O$}{
-
-      \For{inst $\in$ concrete}{
-        block = CFG.blockOf(inst)\;
-        dfsCFG(addrDg, inst, block, \\ \quad \quad \quad \quad \quad writes, reads, $\O$)\;
-      }
-      visit.update(concrete)\;
-      \For{inst $\in$ (writes $\setminus$ visit)}{
-        \uIf{(depInsts(env, inst) $\setminus$ env.evaled) = $\O$}{
-          update $Environment$ $variables$ in env \\ \quad with eval($instruction$ $parameters$)
-        }
-      }
-
-      concrete = \{inst $\in$ (writes $\setminus$ visit) \\ \quad \quad \quad \quad \quad \quad \ \ \ $|$ \ \ $depInsts(env, ins)$ = $\O$\}\;
-    }
-  }
-\end{vAlgorithm}
-
-\RestyleAlgo{algoruled} % ruled algorithm
-\begin{vAlgorithm}[ht!]{0.57\textwidth}{1em}
-  %{algorithm width}{indent width}
-  \SetNoFillComment
-  \caption{dfsCFG}
-
-  \Import AnalysisEnvironment \As env
-
-  \tcc{do CFG dfs for building dependency}
-  \Def{dfsCFG(addrDg, wInst, block, writes, reads, visit)}{
-    visit.add(block)\;
-    rwInsts = block.insts $\cap$ (writes $\cup$ reads)\;
-    \uIf{wInst $\in$ block}{
-      rwInsts = rwInsts $\setminus$ \\ \quad \quad \{ inst $\in$ block.insts $|$ inst.pc $<$ wInst.pc\}\;
-    }
-    \For{inst $\in$ rwInsts}{
-      \tcc{if "exist the probability" to re-write the same address then return, "probability" means the "or" part}
-      \uIf{inst.name = wInst.name
-        \\ \quad \AndL (addrOverlap(env, wInst, inst) \\ \quad \quad \quad \OrL env.addrDepInsts[inst] $\neq$ $\O$)}{
-        visit.remove(block)\;
-        \Return;
-      }
-      \uIf{inst $\in$ reads}{
-        deps = env.addrDepInsts[inst] $\cup$ \\ \quad \quad \quad \quad \ env.offsetDepInsts[inst]\;
-        \uIf{deps $\neq$ $\O$ \AndL \\
-          \quad  deps $\setminus$ env.evaled = $\O$}{
-          update $Environment$ $variables$ in env \\ \quad \quad with eval($instruction$ $parameters$)
-        }
-
-        \uIf{addrOverlap(env, wInst, inst)}{
-          env.evaled.add(inst)\;
-          addrDg.addEdge(wInst, inst)\;
-          env.conVals[inst].update(\\
-          \quad \quad \quad \quad \quad \quad \ \ env.conVals[wInst]);
-        }
-      }
-    }
-    \For{nextBlock $\in$ block.outBlock}{
-      dfsCFG(wInst, nextBlock, writes, reads, visit)\;
-    }
-    visit.remove(block)\;
-  }
-
-\end{vAlgorithm}
-
-\RestyleAlgo{algoruled} % ruled algorithm
-\begin{vAlgorithm}[ht!]{0.55\textwidth}{1em}
+\begin{vAlgorithm}[]{0.5\textwidth}{1em}
   %{algorithm width}{indent width}
   \SetNoFillComment
   \caption{eval}
   \KwIn{$instruction$, $visit$}
-  \KwOut{$concrete$ $values$, $dependant$ $PCs$}
+  \KwOut{$concrete$ $values$, $dependent$ $instructions$}
 
   \Def{eval(inst, visit)}{
     \uIf{inst $\in$ visit}{
       \Return $\O$, \{inst\}\;
     }
     visit.add(inst)\;
-    concrete, dependant = $\O$, $\O$\;
+    concrete, dependent = $\O$, $\O$\;
     \uIf{inst.name.startswith('PUSH')}{
       \Return \{int(op.operand)\}, $\O$;
     }
@@ -493,7 +327,7 @@ To build the address dependency, we need to evaluate the address of the instruct
         \]
       }
       \uElseIf{inst.name = 'NOT'}{
-        val = \Let [x] = argList \In (1 $<<$ 256) - 1 - x\;
+        val = \Let [x] = argList \\ \quad \quad \quad \quad \quad \In (1 $\ll$ 256) - 1 - x\;
       }
       \uElseIf{inst.name = 'AND'}{
         val = \Let x, y = argList \In $x \ \& \ y$\;
@@ -504,21 +338,197 @@ To build the address dependency, we need to evaluate the address of the instruct
       \uElseIf{inst.name = 'EQ'}{
         val = \Let x, y = argList \In $x \ = \ y$\;
       }
-      \uElseIf{inst.name $\in$ \{'MLOAD', 'SLOAD', 'SHA3'\}}{
+      \uElseIf{inst.name $\in$ \\ \quad \{'MLOAD', 'SLOAD', 'SHA3'\}}{
         concrete.update(env.conVals[inst])\;
       }
       \uElse{
         \tcc{SHA3 not impl yet}
-        throw Exception("not handle the inst yet")\;
+        \Throw Exception("not handle the inst yet")\;
       }
       \uIf{val $\neq$ None}{ concrete.add(val)\; }
-      dependant.update(concat(deps))\;
+      dependent.update(concat(deps))\;
     }
     visit.remove(inst)\;
-    \Return concrete, dependant\;
+    \Return concrete, dependent\;
   }
 
 \end{vAlgorithm}
+
+In the environment, there is a set name \textit{evaled}, which contains the instructions which's all possible values we have already evaled and stored in the concrete set, and their dependent instruction set are empty. For every evaluation round of storage and memory we check the \textit{evaled} set to determine if it achieved the convergence. If there are no new instruction added to \textit{evaled}, the evaluation will terminate.
+
+
+\RestyleAlgo{algoruled} % ruled algorithm
+\begin{vAlgorithm}[]{0.56\textwidth}{1em}
+  \SetNoFillComment
+  %{algorithm width}{indent width}
+  \caption{AnalysisEnvironment}
+
+  \tcc{Environment constructor}
+
+  \Def{Environment(stackDg)}{
+
+    rInsts = stackDg.rInsts \;
+    wInsts = stackDg.wInsts \;
+    vals = \{ i, eval(i.vals, $\O$) $|$ i $\in$ wInsts \} \;
+    addrs = \{ i, eval(i.addrs, $\O$) $|$ i $\in$ rInsts $\cup$ wInsts \} \;
+    offsets = \{ i, eval(i.offsets, $\O$) $|$ i $\in$ rInsts $\cup$ wInsts \} \;
+
+    \tcc{eval instructions' parameters (val)}
+    this.conVals = \{ i: con $|$ (i, (con, \_)) $\in$ vals \}\;
+    this.valDepInsts = \{ i: dep $|$ (i, (\_ , dep)) $\in$ vals \}\;
+
+
+    \tcc{eval instructions' parameters (addr)}
+    this.conAddrs = \{ i: con $|$ (i, (con, \_)) $\in$ addrs \}\;
+    this.addrDepInsts = \{ i: dep $|$ (i, (\_ , dep)) $\in$ addrs \}\;
+
+    \tcc{eval instructions' parameters (offset)}
+
+    this.conOffsets = \{ i: con $|$ (i, (con, \_)) $\in$ offsets \}\;
+    this.offsetDepInsts = \{ i: dep $|$ (i, (\_ , dep)) $\in$ offsets \}\;
+
+    \tcc{write insts that can't be re-evaled}
+    this.evaled = \{i $\in$ addrDepInsts $|$ addrDepInsts[i] = $\O$\} \\
+    \quad $\cap$ \{i $\in$ offsetDepInsts $|$ offsetDepInsts[i] = $\O$\} \\
+    \quad $\cap$ \{i $\in$ valDepInsts $|$ valDepInsts[i] = $\O$\}
+  }
+
+  \tcc{Return All dependant program counters}
+
+  \Def{depInsts(env, inst)}{
+    \Return env.addrDepInsts[inst] \\ \quad \quad \quad $\cup$ env.offsetDepInsts[inst] \\ \quad \quad \quad $\cup$ env.valDepInsts[inst]
+  }
+
+  \tcc{check insts if have same addr parameters }
+
+  \Def{addrOverlap(env, instA, instB)}{
+    rangeA = product(env.conAddrs[instA], \\ \quad \quad \quad \quad \quad \quad \quad \ \ env.conOffsets[instA])\;
+    rangeB = product(env.conAddrs[instB], \\ \quad \quad \quad \quad \quad \quad \quad \ \ env.conOffsets[instB])\;
+    \For{(Aa, Ao), (Ba, Bo) $\in$ product(rangeA, rangeB)}{
+      \uIf{\{Aa..Aa + Ao\} $\cap$ \{Ba..Ba + Bo\} $\neq$ $\O$}{
+        \Return True\;
+      }
+    }
+    \Return False\;
+  }
+
+\end{vAlgorithm}
+
+\RestyleAlgo{algoruled} % ruled algorithm
+\begin{vAlgorithm}[]{0.52\textwidth}{1em}
+  %{algorithm width}{indent width}
+  \SetNoFillComment
+  \caption{buildAddressDependency}
+  \KwIn{$CFG$, $StackDG$}
+  \KwOut{$AddressDG$}
+
+  \Import AnalysisEnvironment \As env
+
+  \Def{buildAddressDependency(cfg,\\ \quad \quad \quad \quad \quad \quad stackDg, opcode)}{
+    \tcc{declare and alias variables}
+    addrDg = DG(opcode)\;
+    visit, alter = $\O$, $\O$ \;
+    swrites = \{ inst $\in$ stackDg $|$ inst = SSTORE \} \;
+    sreads = \{ inst $\in$ stackDg $|$ inst = SLOAD \} \;
+    mwrites = \{ insts $\in$ stackDg $|$ inst = MSTORE \}\;
+    mreads = \{ inst $\in$ stackDg $|$ inst $\in$ \{ MLOAD, \\ \quad \quad \quad \quad \quad SHA3, CREATE, CALL, RETURN\}\}\;
+
+    \tcc{new a environment}
+    env = Environment(stackDg)\;
+    \tcc{evaluate until it converge }
+    \While{True}{
+      evaled = env.evaled.copy()\;
+      buildDependency(addrDg, \\ \quad \quad \quad \quad swrites, sreads, visit)\;
+      buildDependency(addrDg, \\ \quad \quad \quad \quad mwrites, mreads, visit)\;
+      \uIf{exist write inst can be re-evaled}{
+        \For{inst $\in$ re-evaled}{
+          update $Environment$ $variables$ \\ \quad \quad \In env with \\ \quad \quad eval($instruction$ $parameters$)
+        }
+      }
+      \uIf{env.evaled $\setminus$ evaled = $\O$}{
+        \Break\;
+      }
+    }
+    \Return addrDg\;
+  }
+
+  \tcc{ build dependency with write instructions}
+  \Def{buildDependency(addrDg, writes, reads, visit)}{
+
+    concrete = \{inst $\in$ (writes $\setminus$ visit) \\ \quad \quad \quad \quad \quad \quad \ \ $|$ \ \ $depInsts(env, inst)$ = $\O$\}\;
+    \While{concrete $\neq$ $\O$}{
+
+      \For{inst $\in$ concrete}{
+        block = CFG.blockOf(inst)\;
+        dfsCFG(addrDg, inst, block, \\ \quad \quad \quad \quad \quad writes, reads, $\O$)\;
+      }
+      visit.update(concrete)\;
+      \For{inst $\in$ (writes $\setminus$ visit)}{
+        \uIf{(depInsts(env, inst) $\setminus$ env.evaled) = $\O$}{
+          update $Environment$ $variables$ \\ \quad \quad \In env with  \\ \quad \quad eval($instruction$ $parameters$)
+        }
+      }
+
+      concrete = \{inst $\in$ (writes $\setminus$ visit) \\ \quad \quad \quad \quad \quad \quad \ \ \ $|$ \ \ $depInsts(env, ins)$ = $\O$\}\;
+    }
+  }
+\end{vAlgorithm}
+
+
+To build the address dependency, we need to evaluate the address of the instruction first. The eval function return both the concrete value set and the dependent instruction set. The argument list is a list of instruction that the current instruction dependent, which is generated from the step of constructing stack dependency graph. After having some concrete addresses of write instructions, we start the CFG traversing with deep first search (DFS) from the addresses.
+
+\RestyleAlgo{algoruled} % ruled algorithm
+\begin{vAlgorithm}[]{0.5\textwidth}{1em}
+  %{algorithm width}{indent width}
+  \SetNoFillComment
+  \caption{dfsCFG}
+
+  \Import AnalysisEnvironment \As env
+
+  \tcc{do CFG dfs for building dependency}
+  \Def{dfsCFG(addrDg, wInst, block, writes, reads, visit)}{
+    \uIf{block $\in$ visit}{
+      \Return\;
+    }
+    \uElse{
+      visit.add(block)\;
+    }
+    rwInsts = block.insts $\cap$ (writes $\cup$ reads)\;
+    \uIf{wInst $\in$ block}{
+      rwInsts = rwInsts $\setminus$ \\ \quad \{ inst $\in$ block.insts $|$ inst.pc $<$ wInst.pc\}\;
+    }
+    \For{inst $\in$ rwInsts}{
+      \tcc{The or part check the probability to re-write the same address}
+      \uIf{inst.name = wInst.name
+        \\ \quad \AndL (addrOverlap(env, wInst, inst) \\ \quad \quad \quad \OrL env.addrDepInsts[inst] $\neq$ $\O$)}{
+        visit.remove(block)\;
+        \Return;
+      }
+      \uIf{inst $\in$ reads}{
+        deps = env.addrDepInsts[inst] $\cup$ \\ \quad \quad \quad \quad \ env.offsetDepInsts[inst]\;
+        \uIf{deps $\neq$ $\O$ \AndL \\
+          \quad  deps $\setminus$ env.evaled = $\O$}{
+          update $Environment$ $variables$ in env with eval($instruction$ $parameters$, $\O$)
+        }
+
+        \uIf{addrOverlap(env, wInst, inst)}{
+          env.evaled.add(inst)\;
+          addrDg.addEdge(wInst, inst)\;
+          env.conVals[inst].update(\\
+          \quad \quad \quad \quad \quad \quad \ \ env.conVals[wInst]);
+        }
+      }
+    }
+    \For{nextBlock $\in$ block.outBlock}{
+      dfsCFG(wInst, nextBlock, \\ \quad \quad \quad \quad writes, reads, visit)\;
+    }
+    visit.remove(block)\;
+  }
+
+\end{vAlgorithm}
+
+
+In the DFS, we must check if we revisit the block. if did not visit, continue the DFS, or return. The other detail we need to notice is that, we need to remove the beginning instruction's previous instruction when we are exploring first block. For all the read/write instruction in the blocks, we check the address if overlap with the address of original write address. If the overlapping occured on write instruction, we need check if there exists the probability to rewrite the beginning address. If the probability exists, the DFS will terminate. If the overlapping occured on read instruction, the concrete values of beginning instruction will be added to it. And the address dependency between the two instruction will be constructed.
 
 \section{experiment}
 \label{sec:experiment}
