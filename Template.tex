@@ -77,9 +77,9 @@ Department of Computer Science, Management Information Systems \\
 \section{Introduction}
 \label{sec:introduction}
 
-There are many interest properties about Ethereum. Ethereum can be viewed as a transaction-based state machine. We can transit the transation state by sending transation or execute smart contract. On Ethereum, all transaction executed on Ethereum Virtual Machine (EVM), which is a simple stack-based architecture, limits stack item size to 1024. Executions will be failed if stackoverflow occured while executing the smart contract. Besides stack, \textbf{\textit{gas}} is another interesting property on Ethereum. To limit the cost of the transaction execution, EVM takes the handling fee named \textbf{\textit{gas}} from transaction sender.
+There are many interest properties about Ethereum. Ethereum can be viewed as a transaction-based state machine. We can transit the transation state by sending transation or execute smart contract. On Ethereum, all transaction executed on Ethereum Virtual Machine (EVM), which is a simple stack-based architecture, limits stack item size to 1024. The word size of the machine (and thus size of stackitems) is 256-bit. Executions will be failed if stackoverflow occured while executing the smart contract. Besides stack, \textbf{\textit{gas}} is another interesting property on Ethereum. To limit the cost of the transaction execution, EVM takes the handling fee named \textbf{\textit{gas}} from transaction sender.
 
-To analyze the properties more precisely, we slice the smart contract by construcing dependencies between instructions. With the dependencies, we can slice a smaller program from some interested point. Then we can the the sliced program for other analysis purpose.
+To analyze the properties more precisely, we slice the smart contract by construcing dependency graph (DG). With the dependencies, we can slice a smaller program from some interested point. Then we can the the sliced program for other analysis purpose.
 
 \section{Related Work}
 \label{sec:relatedwork}
@@ -89,23 +89,10 @@ TBC.
 \section{Method}
 \label{sec:method}
 
-To compute the dependencies between instructions, we need construct the control flow graph first. Unlike register-based machine's instruction, which's operand are called as register explicitly, for the stack-based machine, the operand that instructions depended are stored on the stack implicitly. Thus, a control flow graph for stack simulation is needed.
-
-
-The first step to construct control flow graph is spliting basic blocks. We split basic blocks by \textbf{\textit{JUMPDEST}} and \textbf{\textit{end instructions}}. \textbf{\textit{JUMPDEST}} is normally considered as the beginning of blocks becuase other blocks can target \textbf{\textit{JUMPDEST}} to connect the edges. The \textbf{\textit{end instructions}} include \textbf{\textit{STOP}}, \textbf{\textit{SELFDESTRUCT}}, \textbf{\textit{RETURN}}, \textbf{\textit{REVERT}}, \textbf{\textit{INVALID}}, \textbf{\textit{SUICIDE}}, \textbf{\textit{JUMP}}, \textbf{\textit{JUMPI}}.
-
-The second step is building the edges between basic blocks. Some edges can be computed by simply succeeding the pc of the \textbf{\textit{JUMPI}} and other instructions $\notin$ \textbf{\textit{end instructions}}, followed by \textbf{\textit{JUMPDEST}}. Because the property of the stack-based machine, all the jump destinations are pushed to stack implicitly. For this problem, we use value set analysis to find all the possible destination values.
-
-Most of smart contracts are written as Solidity, whcih is an object-oriented (or even called contract-oriented), high-level language for implementing smart contracts. The contract in Solidity is like an object. Users can call the public functions in the contract, which we can treat as member functions in a object. From lower-level --- EVM bytecode, the Solidity compiler will compile a dispatcher to dispatch all the public functions in the contract. The dispatcher can recognize the function hashes in transactions that users sent via Application Binary Interface (ABI). We compute the function boundaries and apply the value set analysis on each function to construct complete contract flow graph and instruction dependencies.
-
-In the value set analysis (VSA), we traverse the basic blocks in control flow graph and continue finding new target address of next block by simulate the execution of instructions with a abstract stack. Abstract stack abstracts all the possible statck state. The nth-item in abstract stack represent a set of all possible value of nth-item in all possible stack state. So it is a over-approximation to compute the jump destinations. For each block, we record the states of the abstract stack before and after executing the instructions in the block. With the states, we can check the converge of the analysis. If we revisit a block, and it's post-execution state is same as last time, we consider it achieve the converge. We assume no new value would be found. Note that only the \textbf{\textit{PUSH}}, \textbf{\textit{SWAP}}, \textbf{\textit{DUP}}, \textbf{\textit{AND}} instruction are implemented here, for other instructions, we only do the push, pop on the stack based on the operation times it defined. It's because other instructions implementation will not affect the target address computation.
-
-The instructions dependencies are also constructed while doing value set analysis. To build the dependencies between instructions, we need keeping track of the data flow of instruction operands. All the operands are pushed into and poped from the stack. Instead of marking all the operands with the instructions which pushed it, we push the instructions to the stack directly, and edges are added when the instructions are popped. Note that we don't use abstract stack here.Instead, we use a set of stack to keep all the states of possible stacks to maintain the accuracy of each operand list. If we use abstract stack here, more combination of operand list will be generated. It will lead more ambiguous result for address evaluation while building memory dependency.
-
-After building the instruction dependency with stacks by value set analysis. we start to build the dependency between instruction by address of memory and storage.
+To compute the dependencies between instructions, we need construct the control flow graph (CFG) first. Unlike register-based machine's instruction, which's operand are called as register explicitly, for the stack-based machine, the operand that instructions depended are stored on the stack implicitly. Thus, a CFG for stack simulation is needed.
 
 \RestyleAlgo{algoruled} % ruled algorithm
-\begin{vAlgorithm}[ht!]{0.50\textwidth}{1em}
+\begin{vAlgorithm}[]{0.50\textwidth}{1em}
   %{algorithm width}{indent width}
   \SetNoFillComment
   \caption{buildCFGandStackDependency}
@@ -113,8 +100,7 @@ After building the instruction dependency with stacks by value set analysis. we 
   \KwOut{$CFG, StackDG$}
   %\tcc{split blocks with $JUMP$, $JUMPI$, \\ $STOP$, $SELFDESTRUCT$, $RETURN$, \\ $REVERT$, $INVALID$, $SUICIDE$ \\ $JUMPDEST$ ... etc}
   \Def{buildCFGandStackDependency(opcode)}{
-    dg = DG(opcode)\;
-    cfg = CFG(opcode)\;
+    dg, cfg = DG(opcode), CFG(opcode)\;
     cfg.buildBasicBlocks()\;
     cfg.buildSimpleEdges()\;
     cfg.buildFunctions(cfg.basicBlocks.first)\;
@@ -125,11 +111,11 @@ After building the instruction dependency with stacks by value set analysis. we 
   }
   \tcc{state constructor}
   \Def{State()}{
-    this.visit = dictionary(default=0)\;
-    this.stacksIn = dictionary(default=None)\;
-    this.stacksOut = dictionary(default=None)\;
-    this.lastDiscoveredTargets = dictionary(default=$\O$)\;
-    this.discoveredTargets = dictionary(default=$\O$)\;
+    this.visit = dict(dflt=0)\;
+    this.stacksIn = dict(dflt=None)\;
+    this.stacksOut = dict(dflt=None)\;
+    this.discoveredTargets = dict(dflt=$\O$)\;
+    this.lastDiscoveredTargets = dict(dflt=$\O$)\;
   }
   \tcc{value set analysis}
   \Def{valueSetAnalysis(cfg, dg, func)}{
@@ -138,23 +124,35 @@ After building the instruction dependency with stacks by value set analysis. we 
     \Do{toExplore}{
       outBlocks = \{ toExplore.pop() \}\;
       \Do{outBlocks}{
-        block = outBlocks.pop()\;
-        outBlocks = outBlocks $\cup$ \\ \quad \quad transFuncBlock(cfg, dg, func, \\ \quad \quad \quad \quad \quad \quad \quad \quad \ \ \ block, stat)\;
+        outBlocks = outBlocks $\cup$ \\ \quad \quad transFuncBlock(cfg, dg, func, \\ \quad \quad \quad \quad \quad \quad outBlocks.pop(), stat)\;
       }
       \For{src, dsts $\in$ stat.lastDiscoveredTargets}{
         cfg.addEdges(src, dsts)\;
         toExplore = toExplore $\cup$ dsts\;
       }
-
-      stat.lastDiscoveredTargets = \quad dictionary(default=$\O$)\;
+      stat.visit = dict(dflt=0)\;
+      stat.lastDiscoveredTargets = dict(dflt=$\O$)\;
     }
-    cfg.computeReachability(func.entry, func.id)\;
+    %cfg.computeReachability(func.entry, func.id)\;
   }
 
 \end{vAlgorithm}
 
+The first step to construct CFG is spliting basic blocks. We split basic blocks by \textbf{\textit{JUMPDEST}} and \textbf{\textit{end instructions}}. \textbf{\textit{JUMPDEST}} is normally considered as the beginning of blocks becuase other blocks can target \textbf{\textit{JUMPDEST}} to connect the edges. The \textbf{\textit{end instructions}} include \textbf{\textit{STOP}}, \textbf{\textit{SELFDESTRUCT}}, \textbf{\textit{RETURN}}, \textbf{\textit{REVERT}}, \textbf{\textit{INVALID}}, \textbf{\textit{SUICIDE}}, \textbf{\textit{JUMP}}, \textbf{\textit{JUMPI}}.
+
+The second step is building the edges between basic blocks. Some edges can be computed by simply succeeding the pc of the \textbf{\textit{JUMPI}} and other instructions $\notin$ \textbf{\textit{end instructions}}, followed by \textbf{\textit{JUMPDEST}}. Because the property of the stack-based machine, all the jump destinations are pushed to stack implicitly. For this problem, we use value set analysis (VSA) to find all the possible destination values.
+
+Most of smart contracts are written in Solidity, whcih is an object-oriented (or contract-oriented), high-level language for implementing smart contracts. The contract in Solidity is like an object. Users can call the public functions in the contract, which we can treat as member functions in a object. From lower-level --- EVM bytecode, the Solidity compiler will compile a dispatcher to dispatch public functions in the contract. The dispatcher can recognize the function hashes in transactions that users sent via Application Binary Interface (ABI). We compute the function boundaries and apply the VSA on each function to construct complete contract flow graph and instruction dependencies.
+
+
+
+In the VSA, we traverse the basic blocks in CFG and continue finding new target address of next block by simulate the execution of instructions with a abstract stack. Abstract stack abstracts all the possible statck state. The nth-item in abstract stack represent a set of all possible value of nth-item in all possible stack state. So it is a over-approximation to compute the jump destinations. For each block, we record the states of the abstract stack before and after executing the instructions in the block. With the states, we can check the converge of the analysis. If we revisit a block, and it's post-execution state is same as last time, we consider it achieve the converge. We assume no new value would be found. Note that only the \textbf{\textit{PUSH}}, \textbf{\textit{SWAP}}, \textbf{\textit{DUP}}, \textbf{\textit{AND}} are implemented here, for other instructions, we only do the push, pop on the stack based on the operation times it defined. It's because other instructions implementation will not affect the target address computation.
+
+
+The instructions dependencies are also constructed while doing VSA. To build the dependencies, we need keeping track of the data flow of operands. All the operands are pushed into and poped from the stack. Instead of marking the operands with the instructions which pushed it, we push the instructions to the stack directly, and edges are added when the instructions are popped. Note that we don't use abstract stack here.Instead, we use a set of stack to keep all the states of possible stacks to maintain the accuracy of each operand list. If we use abstract stack here, more combination of operand list will be generated. It will lead more ambiguous result for address evaluation while building memory dependency.
+
 \RestyleAlgo{algoruled} % ruled algorithm
-\begin{vAlgorithm}[ht!]{0.5\textwidth}{1em}
+\begin{vAlgorithm}[]{0.5\textwidth}{1em}
   \SetNoFillComment
   %{algorithm width}{indent width}
   \caption{ValueSetAnalysisUtility}
@@ -165,7 +163,7 @@ After building the instruction dependency with stacks by value set analysis. we 
 
     stat.visit[block] += 1\;
 
-    \tcc{save previous stack to check convergence}
+    \tcc{save pre-stack to check convergence}
     prevStack, \_ = stat.stacksOut[block]
 
     oprdStack, instStack = abstStack(), listStack()\;
@@ -200,7 +198,7 @@ After building the instruction dependency with stacks by value set analysis. we 
   \Def{exploreBlock(dg, block, oprdStack, instStack, stat)}{
     \For{inst $\in$ block.instructions}{
       stat.stacksIn[inst] = (oprdStack, instStack)\;
-      stat.stacksOut[inst] = \\ \quad transferFuncInst(dg, inst, \\ \quad \quad \quad oprdStack, instStack, stat)\;
+      stat.stacksOut[inst] = transferFuncInst( \\ \quad \quad \ \ dg, inst, oprdStack, instStack, stat)\;
     }
   }
   \tcc{add branch to value set analysis}
@@ -216,13 +214,18 @@ After building the instruction dependency with stacks by value set analysis. we 
 
 \end{vAlgorithm}
 
+After building the instruction dependency with stacks by value set analysis. we start to build the dependency between instruction by address of memory and storage.
+
+Memory and storage are other two main data read/write mechanisms on Ethereum except stack, where the memory is volatile, the storage is non-volatile. By the way, according the figure below, we can find that the EVM does not follow the standard von Neu-mann architecture. Rather than storing program code in generally-accessible memory or storage, it is stored separately in a virtual ROM interactable only through a specialised instruction.\cite{wood2014ethereum}
+
+
 \RestyleAlgo{algoruled} % ruled algorithm
-\begin{vAlgorithm}[ht!]{0.56\textwidth}{1em}
+\begin{vAlgorithm}[t!]{0.5\textwidth}{1em}
   \SetNoFillComment
   %{algorithm width}{indent width}
   \caption{ValueSetAnalysisUtility}
   \tcc{ transfer instruction }
-  \Def{transferFuncInst(dg, inst, oprdStack, instStack, stat)}{
+  \Def{transferFuncInst(dg, inst, \\ \quad \quad \quad \quad \quad \quad oprdStack, instStack, stat)}{
     oprdStack = oprdStack.copy()\;
     instStack = instStack.copy()\;
     \uIf{ inst $\in$ PUSHn[n=1..32] }{
@@ -247,13 +250,13 @@ After building the instruction dependency with stacks by value set analysis. we 
       instStack.push(inst)\;
     }
     \uElse{
-      \RepTimes{inst.popNumber}{
+      \RepTimes{inst.popTimes}{
         oprdStack.pop()\;
       }
-      \For{args $\in$ [instStack.pop() \\ \quad \quad \ $|$ n $\in$ range(inst.popNumber)]$^T$}{
+      \For{args $\in$ [instStack.pop() \\ \quad \quad \ $|$ n $\in$ range(inst.popTimes)]$^T$}{
         dg.addEdges(inst, args)\;
       }
-      \RepTimes{inst.pushNumber}{
+      \RepTimes{inst.pushTimes}{
         oprdStack.push(None)\;
         instStack.push(inst)\;
       }
@@ -261,6 +264,20 @@ After building the instruction dependency with stacks by value set analysis. we 
     \Return oprdStack, instStack\;
   }
 \end{vAlgorithm}
+
+\begin{figure}[ht!]
+\centering
+\includegraphics[width=80mm]{EVM.png}
+\caption{EVM architecture\label{overflow}}
+\end{figure}
+
+There is an indexer recording current memory used, it indicates the maximum index of current memory used. The total fee for memory-usage payable is proportional to smallest multiple of 32 bytes  that  are  required  such  that  all  memory  indices (whether for read or write) are included in the range\cite{wood2014ethereum}.
+
+Storage fees have a slightly nuanced behaviour—to in-centivise minimisation of the use of storage (which corre-sponds directly to a larger state database on all nodes),the execution fee for an operation that clears an entry in the storage is not only waived, a qualified refund is given;in fact, this refund is effectively paid up-front since the initial usage of a storage location costs substantially more than normal usage\cite{wood2014ethereum}.
+
+The main idea to construct address dependency is traversing the CFG from write instructions with a adress, and build the dependencies with the instructions which read the address, until meet the next instructions whcih rewrite the address. With the DG we constructed, we can evaluate some address values and the stored values from known constants by the dependencies. There are some instructions about the read/write operation on memory and storage. For the storage, the write instructions is \textbf{\textit{SSTORE}}, the load instruction is \textbf{\textit{SLOAD}}. For the memory, the write instruction is \textbf{\textit{MSTORE}}, the read instruction include \textbf{\textit{MLOAD}}, \textbf{\textit{SHA3}}, \textbf{\textit{CREATE}}, \textbf{\textit{CALL}}, \textbf{\textit{RETURN}}.
+
+For write instructions, there are three part we concerned: the address it stored, the range of memory (offset) it covered and the value it wrote. For each part, if we could eval it as constants from other constants (normally come from the terminal of DG --- \textbf{\textit{PUSH}} instruction), we save the values as a concrete value set for the part. if not, all the instruction that it needed to do evaluation, would be saved as a dependant instruction set, once all the instruction in the set are evaluated, the part could be evaluated again to get the concrete values. Same as the write instructions, the read instructions also have these part. But for the values it load, are depended on the write instructions' value which have the same address as it, that's just the dependency we want to construct.
 
 
 \RestyleAlgo{algoruled} % ruled algorithm
